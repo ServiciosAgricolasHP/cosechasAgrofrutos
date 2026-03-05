@@ -1,36 +1,53 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+
+import { getWorkerWeights } from "./services/getWorkerWeights"
+import { useState, useEffect } from "react";
+import { testConnection } from "./services/getWorkerWeights";
+
 
 function App() {
-  const [count, setCount] = useState(0)
-  console.log(import.meta.env.VITE_FIREBASE_PROJECT_ID);
+  useEffect(() => {
+    testConnection();
+
+  }, []);
+
+ 
+  const [rut, setRut] = useState("");
+  const [weights, setWeights] = useState([]);
+
+  const buscar = async () => {
+    const data = await getWorkerWeights(rut);
+    setWeights(data);
+  };
+  //console.log(import.meta.env.VITE_FIREBASE_PROJECT_ID);
+  //console.log(firebaseConfig);
+
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count} momantai
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <div>
+
+      <h1>Buscar pesajes</h1>
+
+      <input
+        type="text"
+        placeholder="Ingrese RUT"
+        value={rut}
+        onChange={(e) => setRut(e.target.value)}
+      />
+
+      <button onClick={buscar}>
+        Buscar
+      </button>
+
+      <ul>
+        {weights.map((w, i) => (
+          <li key={i}>
+            {w.date} - {w.amount} kg
+          </li>
+        ))}
+      </ul>
+
+    </div>
+  );
 }
 
-export default App
+export default App;
