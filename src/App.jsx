@@ -1,7 +1,5 @@
-// App.jsx - Versión corregida
-import React, { useState, Fragment } from "react";
+import React, { useState, Fragment, useRef } from "react";
 import { getWorkerWeightsOptimized } from "./services/getWorkerWeightsOptimized";
-
 import {
   Box,
   Button,
@@ -28,28 +26,27 @@ import {
   Flex,
   Wrap,
   WrapItem,
+  Select,
+  useMediaQuery,
+  IconButton,
+  Tooltip,
 } from "@chakra-ui/react";
-
+import { ViewIcon, CalendarIcon } from "@chakra-ui/icons";
 import { motion } from "framer-motion";
+import StatsCards from "./components/StatsCards";
+import MobileDayCards from "./components/MobileDayCards";
+import CalendarView from "./components/CalendarView";
+import CopyTableButton from "./components/CopyTableButton";
 
 const MotionBox = motion.create(Box);
 
-// Mapeo de colores por tipo de producto
 const getProductColor = (productType) => {
-  const colors = {
-    export: "green",
-    iqf: "orange",
-  };
+  const colors = { export: "green", iqf: "orange" };
   return colors[productType] || "blue";
 };
 
-// Mapeo de colores por tipo de unidad
 const getUnitColor = (unitType) => {
-  const colors = {
-    kg: "teal",
-    bandejas: "cyan",
-    capacho: "yellow",
-  };
+  const colors = { kg: "teal", bandejas: "cyan", capacho: "yellow" };
   return colors[unitType] || "gray";
 };
 
@@ -59,34 +56,27 @@ function App() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [openDay, setOpenDay] = useState(null);
-
-  // Estado para los límites de fecha del trabajador actual
   const [minAvailableDate, setMinAvailableDate] = useState(null);
   const [maxAvailableDate, setMaxAvailableDate] = useState(null);
+  const [selectedLocation, setSelectedLocation] = useState("todos");
+  const [viewMode, setViewMode] = useState("table");
+  const [isMobile] = useMediaQuery("(max-width: 768px)");
+  const tableRef = useRef(null);
 
-  // App.jsx - Agregar manejo de errores en la función buscar
   async function buscar() {
     if (!rut) return;
-
     try {
-      const result = await getWorkerWeightsOptimized(rut, {
-        startDate,
-        endDate,
-      });
-
-      // Manejar error si no se encuentra el trabajador
+      const result = await getWorkerWeightsOptimized(rut, { startDate, endDate });
       if (result.error) {
         setData(null);
         setMinAvailableDate(null);
         setMaxAvailableDate(null);
         setStartDate("");
         setEndDate("");
-        alert(result.message); // Mostrar mensaje de error
+        alert(result.message);
         return;
       }
-
       setData(result);
-
       if (result?.firstDate) {
         setMinAvailableDate(result.firstDate);
         setStartDate(result.firstDate);
@@ -94,7 +84,6 @@ function App() {
         setMinAvailableDate(null);
         setStartDate("");
       }
-
       if (result?.lastDate) {
         setMaxAvailableDate(result.lastDate);
         setEndDate(result.lastDate);
@@ -102,8 +91,9 @@ function App() {
         setMaxAvailableDate(null);
         setEndDate("");
       }
+      setSelectedLocation("todos");
     } catch (error) {
-      console.error("Error al buscar:", error);
+      console.error(error);
       setData(null);
       setMinAvailableDate(null);
       setMaxAvailableDate(null);
@@ -113,15 +103,47 @@ function App() {
     }
   }
 
-  // Función para limpiar filtros
-  function clearFilters() {
+  const clearFilters = () => {
     if (minAvailableDate) setStartDate(minAvailableDate);
     if (maxAvailableDate) setEndDate(maxAvailableDate);
-  }
+  };
 
   let filteredDays = data?.days || [];
+  if (selectedLocation !== "todos") {
+    filteredDays = filteredDays.filter((day) => day.locations.includes(selectedLocation));
+  }
   if (startDate) filteredDays = filteredDays.filter((d) => d.date >= startDate);
   if (endDate) filteredDays = filteredDays.filter((d) => d.date <= endDate);
+
+  const computeFilteredTotals = () => {
+    const totalsMap = new Map();
+    filteredDays.forEach((day) => {
+      day.totals.forEach((total) => {
+        const key = total.key;
+        if (!totalsMap.has(key)) {
+          totalsMap.set(key, { ...total, amount: 0, count: 0 });
+        }
+        const existing = totalsMap.get(key);
+        existing.amount += total.amount;
+        existing.count += total.count;
+      });
+    });
+    return Array.from(totalsMap.values()).map(t => ({
+      ...t,
+      amount: Number(t.amount.toFixed(2))
+    })).sort((a, b) => {
+      if (a.productType !== b.productType) return a.productType.localeCompare(b.productType);
+      return a.unitType.localeCompare(b.unitType);
+    });
+  };
+
+  const filteredTotals = computeFilteredTotals();
+
+  const totalEntriesFiltered = filteredDays.reduce((sum, d) => sum + d.entries.length, 0);
+  const daysCountFiltered = filteredDays.length;
+  const locationsCountFiltered = new Set(filteredDays.flatMap(d => d.locations)).size;
+  const totalWeightFiltered = filteredTotals.reduce((sum, t) => sum + t.amount, 0);
+  const avgDailyFiltered = daysCountFiltered > 0 ? (totalWeightFiltered / daysCountFiltered).toFixed(1) : 0;
 
   return (
     <Container maxW="1200px" py="10">
@@ -130,10 +152,9 @@ function App() {
           Cosecha Agrofrutos - Visor de Pesajes
         </Heading>
 
-        {/* Buscador */}
         <Stack direction={{ base: "column", md: "row" }} spacing="3">
           <Input
-            placeholder="Ingrese RUT"
+            placeholder="Ingrese RUT o código QR (ej: SF-200, 12345678-K)"
             value={rut}
             onChange={(e) => setRut(e.target.value)}
             onKeyPress={(e) => e.key === "Enter" && buscar()}
@@ -143,7 +164,6 @@ function App() {
           </Button>
         </Stack>
 
-        {/* Información del trabajador */}
         {data?.worker && (
           <Box p="4" borderRadius="lg" bg="green.50">
             <Flex justify="space-between" align="start" wrap="wrap">
@@ -159,7 +179,6 @@ function App() {
                 Buscado por: {data.searchType === "qr" ? "Código QR" : "RUT"}
               </Badge>
             </Flex>
-
             <HStack mt="2" wrap="wrap">
               {data.worker.idQr?.map((code) => (
                 <Badge key={code} colorScheme="green">
@@ -167,7 +186,6 @@ function App() {
                 </Badge>
               ))}
             </HStack>
-
             {data.locations && data.locations.length > 0 && (
               <HStack mt="2">
                 <Text fontSize="sm" fontWeight="semibold">
@@ -180,8 +198,6 @@ function App() {
                 ))}
               </HStack>
             )}
-
-            {/* Indicador de rango de fechas disponible */}
             {minAvailableDate && maxAvailableDate && (
               <Text fontSize="xs" color="gray.500" mt="2">
                 📅 Rango disponible: {minAvailableDate} al {maxAvailableDate}
@@ -190,10 +206,18 @@ function App() {
           </Box>
         )}
 
-        {/* Estadísticas totales - Dinámico */}
-        {data?.totals && data.totals.length > 0 && (
+        {data && (
+          <StatsCards
+            daysCount={daysCountFiltered}
+            totalEntries={totalEntriesFiltered}
+            locationsCount={locationsCountFiltered}
+            avgDaily={avgDailyFiltered}
+          />
+        )}
+
+        {filteredTotals.length > 0 && (
           <Wrap spacing="4" justify="center">
-            {data.totals.map((total) => (
+            {filteredTotals.map((total) => (
               <WrapItem key={total.key}>
                 <Box
                   p="4"
@@ -202,9 +226,7 @@ function App() {
                   minW="150px"
                 >
                   <Stat>
-                    <StatLabel
-                      color={`${getProductColor(total.productType)}.700`}
-                    >
+                    <StatLabel color={`${getProductColor(total.productType)}.700`}>
                       {total.productName} - {total.unitName}
                     </StatLabel>
                     <StatNumber fontSize="xl">
@@ -218,13 +240,8 @@ function App() {
           </Wrap>
         )}
 
-        {/* Filtros de fecha - Actualizado con límites dinámicos */}
         {data && minAvailableDate && maxAvailableDate && (
-          <Stack
-            direction={{ base: "column", md: "row" }}
-            spacing="3"
-            align="center"
-          >
+          <Stack direction={{ base: "column", md: "row" }} spacing="3" align="center">
             <Input
               type="date"
               value={startDate}
@@ -239,183 +256,230 @@ function App() {
               max={maxAvailableDate}
               onChange={(e) => setEndDate(e.target.value)}
             />
-            <Button
+            <Select
+              value={selectedLocation}
+              onChange={(e) => setSelectedLocation(e.target.value)}
               size="sm"
-              variant="outline"
-              onClick={clearFilters}
-              isDisabled={
-                startDate === minAvailableDate && endDate === maxAvailableDate
-              }
+              width="200px"
             >
+              <option value="todos">Todos los lugares</option>
+              {data.locations.map((loc) => (
+                <option key={loc} value={loc}>
+                  {loc}
+                </option>
+              ))}
+            </Select>
+            <Button size="sm" variant="outline" onClick={clearFilters}>
               Restablecer rango
             </Button>
           </Stack>
         )}
 
-        {/* Tabla de días */}
-        {filteredDays.length > 0 && (
-          <Table variant="simple" size="sm">
-            <Thead bg="green.100">
-              <Tr>
-                <Th>Fecha</Th>
-                {data?.totals.map((total) => (
-                  <Th key={total.key} isNumeric>
-                    {total.productName}
-                    <br />
-                    <Text fontSize="xs" fontWeight="normal">
-                      {total.unitName}
-                    </Text>
-                  </Th>
-                ))}
-                <Th isNumeric>Total Pesajes</Th>
-                <Th>Lugares</Th>
-                <Th></Th>
-              </Tr>
-            </Thead>
-            <Tbody>
-              {filteredDays.map((day) => (
-                <Fragment key={day.date}>
-                  <Tr>
-                    <Td fontWeight="medium">{day.date}</Td>
-                    {data.totals.map((total) => {
-                      const dayTotal = day.totals.find(
-                        (t) => t.key === total.key,
-                      );
-                      const amount = dayTotal?.amount || 0;
-                      return (
-                        <Td key={total.key} isNumeric>
-                          {amount > 0 ? (
-                            <Badge
-                              colorScheme={getProductColor(total.productType)}
-                              fontSize="sm"
-                              p="1"
-                            >
-                              {amount}{" "}
-                              {amount > 0 && total.unitType !== "kg"
-                                ? total.unitName
-                                : ""}
-                            </Badge>
-                          ) : (
-                            "-"
-                          )}
-                        </Td>
-                      );
-                    })}
-                    <Td isNumeric>{day.entries.length}</Td>
-                    <Td>
-                      <HStack spacing={1}>
-                        {day.locations.map((loc) => (
-                          <Badge key={loc} size="sm" variant="outline">
-                            {loc}
-                          </Badge>
+        {data && (
+          <HStack justify="flex-end" spacing={2}>
+            <Tooltip label="Vista tabla">
+              <IconButton
+                icon={<ViewIcon />}
+                variant={viewMode === "table" ? "solid" : "outline"}
+                colorScheme="blue"
+                onClick={() => setViewMode("table")}
+                aria-label="Vista tabla"
+              />
+            </Tooltip>
+            <Tooltip label="Vista calendario">
+              <IconButton
+                icon={<CalendarIcon />}
+                variant={viewMode === "calendar" ? "solid" : "outline"}
+                colorScheme="blue"
+                onClick={() => setViewMode("calendar")}
+                aria-label="Vista calendario"
+              />
+            </Tooltip>
+            {viewMode === "table" && filteredDays.length > 0 && !isMobile && (
+              <CopyTableButton targetRef={tableRef} />
+            )}
+          </HStack>
+        )}
+
+        {data && (
+          <>
+            {viewMode === "calendar" ? (
+              <CalendarView days={filteredDays} />
+            ) : (
+              <>
+                {isMobile ? (
+                  <MobileDayCards days={filteredDays} totals={filteredTotals} />
+                ) : (
+                  <Box ref={tableRef}>
+                    <Table variant="simple" size="sm">
+                      <Thead bg="green.100">
+                        <Tr>
+                          <Th>Fecha</Th>
+                          {filteredTotals.map((total) => (
+                            <Th key={total.key} isNumeric>
+                              {total.productName}
+                              <br />
+                              <Text fontSize="xs" fontWeight="normal">
+                                {total.unitName}
+                              </Text>
+                            </Th>
+                          ))}
+                          <Th isNumeric>Total Pesajes</Th>
+                          <Th>Lugares</Th>
+                          <Th></Th>
+                        </Tr>
+                      </Thead>
+                      <Tbody>
+                        {filteredDays.map((day) => (
+                          <Fragment key={day.date}>
+                            <Tr>
+                              <Td fontWeight="medium">{day.date}</Td>
+                              {filteredTotals.map((total) => {
+                                const dayTotal = day.totals.find(
+                                  (t) => t.key === total.key
+                                );
+                                const amount = dayTotal?.amount || 0;
+                                return (
+                                  <Td key={total.key} isNumeric>
+                                    {amount > 0 ? (
+                                      <Badge
+                                        colorScheme={getProductColor(
+                                          total.productType
+                                        )}
+                                        fontSize="sm"
+                                        p="1"
+                                      >
+                                        {amount}{" "}
+                                        {amount > 0 && total.unitType !== "kg"
+                                          ? total.unitName
+                                          : ""}
+                                      </Badge>
+                                    ) : (
+                                      "-"
+                                    )}
+                                  </Td>
+                                );
+                              })}
+                              <Td isNumeric>{day.entries.length}</Td>
+                              <Td>
+                                <HStack spacing={1}>
+                                  {day.locations.map((loc) => (
+                                    <Badge key={loc} size="sm" variant="outline">
+                                      {loc}
+                                    </Badge>
+                                  ))}
+                                </HStack>
+                              </Td>
+                              <Td>
+                                <Button
+                                  size="xs"
+                                  onClick={() =>
+                                    setOpenDay(
+                                      openDay === day.date ? null : day.date
+                                    )
+                                  }
+                                >
+                                  Ver detalle
+                                </Button>
+                              </Td>
+                            </Tr>
+                            <Tr key={day.date + "-details"}>
+                              <Td colSpan={filteredTotals.length + 4} p="0">
+                                <Collapse in={openDay === day.date} animateOpacity>
+                                  <MotionBox
+                                    initial={{ opacity: 0, y: -10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    p="4"
+                                    bg="gray.50"
+                                  >
+                                    <SimpleGrid
+                                      columns={{ base: 1, sm: 2, md: 3, lg: 4 }}
+                                      spacing="3"
+                                    >
+                                      {day.entries.map((entry, i) => (
+                                        <Box
+                                          key={i}
+                                          p="3"
+                                          borderWidth="1px"
+                                          borderRadius="md"
+                                          bg="white"
+                                          shadow="sm"
+                                        >
+                                          <Flex
+                                            justify="space-between"
+                                            align="center"
+                                            mb="2"
+                                          >
+                                            <Badge
+                                              colorScheme={getProductColor(
+                                                entry.quality.product.toLowerCase()
+                                              )}
+                                            >
+                                              {entry.quality.product}
+                                            </Badge>
+                                            <Badge
+                                              colorScheme={getUnitColor(
+                                                entry.quality.unit.toLowerCase()
+                                              )}
+                                            >
+                                              {entry.quality.unit}
+                                            </Badge>
+                                            <Badge variant="outline">
+                                              {entry.locationCode}
+                                            </Badge>
+                                          </Flex>
+                                          <Text
+                                            fontSize="2xl"
+                                            fontWeight="bold"
+                                            textAlign="center"
+                                            my="2"
+                                          >
+                                            {entry.amount}
+                                            <Text
+                                              as="span"
+                                              fontSize="sm"
+                                              fontWeight="normal"
+                                            >
+                                              {" "}
+                                              {entry.quality.unit === "Kilos"
+                                                ? "kg"
+                                                : ""}
+                                            </Text>
+                                          </Text>
+                                          <Text
+                                            fontSize="xs"
+                                            color="gray.500"
+                                            textAlign="center"
+                                          >
+                                            Supervisor: {entry.supervisor}
+                                          </Text>
+                                          {entry.paid && (
+                                            <Badge
+                                              colorScheme="purple"
+                                              size="sm"
+                                              mt="2"
+                                              width="full"
+                                              textAlign="center"
+                                            >
+                                              Pagado
+                                            </Badge>
+                                          )}
+                                        </Box>
+                                      ))}
+                                    </SimpleGrid>
+                                  </MotionBox>
+                                </Collapse>
+                              </Td>
+                            </Tr>
+                          </Fragment>
                         ))}
-                      </HStack>
-                    </Td>
-                    <Td>
-                      <Button
-                        size="xs"
-                        onClick={() =>
-                          setOpenDay(openDay === day.date ? null : day.date)
-                        }
-                      >
-                        Ver detalle
-                      </Button>
-                    </Td>
-                  </Tr>
-
-                  <Tr key={day.date + "-details"}>
-                    <Td colSpan={data.totals.length + 4} p="0">
-                      <Collapse in={openDay === day.date} animateOpacity>
-                        <MotionBox
-                          initial={{ opacity: 0, y: -10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          p="4"
-                          bg="gray.50"
-                        >
-                          <SimpleGrid
-                            columns={{ base: 1, sm: 2, md: 3, lg: 4 }}
-                            spacing="3"
-                          >
-                            {day.entries.map((entry, i) => (
-                              <Box
-                                key={i}
-                                p="3"
-                                borderWidth="1px"
-                                borderRadius="md"
-                                bg="white"
-                                shadow="sm"
-                              >
-                                <Flex
-                                  justify="space-between"
-                                  align="center"
-                                  mb="2"
-                                >
-                                  <Badge
-                                    colorScheme={getProductColor(
-                                      entry.quality.product.toLowerCase(),
-                                    )}
-                                  >
-                                    {entry.quality.product}
-                                  </Badge>
-                                  <Badge
-                                    colorScheme={getUnitColor(
-                                      entry.quality.unit.toLowerCase(),
-                                    )}
-                                  >
-                                    {entry.quality.unit}
-                                  </Badge>
-                                  <Badge variant="outline">
-                                    {entry.locationCode}
-                                  </Badge>
-                                </Flex>
-
-                                <Text
-                                  fontSize="2xl"
-                                  fontWeight="bold"
-                                  textAlign="center"
-                                  my="2"
-                                >
-                                  {entry.amount}
-                                  <Text
-                                    as="span"
-                                    fontSize="sm"
-                                    fontWeight="normal"
-                                  >
-                                    {" "}
-                                    {entry.quality.unit === "Kilos" ? "kg" : ""}
-                                  </Text>
-                                </Text>
-
-                                <Text
-                                  fontSize="xs"
-                                  color="gray.500"
-                                  textAlign="center"
-                                >
-                                  Supervisor: {entry.supervisor}
-                                </Text>
-
-                                {entry.paid && (
-                                  <Badge
-                                    colorScheme="purple"
-                                    size="sm"
-                                    mt="2"
-                                    width="full"
-                                    textAlign="center"
-                                  >
-                                    Pagado
-                                  </Badge>
-                                )}
-                              </Box>
-                            ))}
-                          </SimpleGrid>
-                        </MotionBox>
-                      </Collapse>
-                    </Td>
-                  </Tr>
-                </Fragment>
-              ))}
-            </Tbody>
-          </Table>
+                      </Tbody>
+                    </Table>
+                  </Box>
+                )}
+              </>
+            )}
+          </>
         )}
 
         {filteredDays.length === 0 && data && (
