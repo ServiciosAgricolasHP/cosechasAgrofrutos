@@ -32,22 +32,20 @@ import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../../firebase";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 
 const GroupLeaderView = () => {
   const [leaders, setLeaders] = useState([]);
   const [selectedLeader, setSelectedLeader] = useState("");
-  const [workersRaw, setWorkersRaw] = useState([]); // trabajadores sin clasificar
+  const [workersRaw, setWorkersRaw] = useState([]);
   const [loadingLeaders, setLoadingLeaders] = useState(true);
   const [loadingWorkers, setLoadingWorkers] = useState(false);
   const [error, setError] = useState(null);
-
-  // Estados para filtro y ordenamiento
   const [searchTerm, setSearchTerm] = useState("");
-  const [sortBy, setSortBy] = useState("nombre"); // "rut" o "nombre"
+  const [sortBy, setSortBy] = useState("nombre");
   const [sortOrder, setSortOrder] = useState("asc");
-  const [statusFilter, setStatusFilter] = useState("all"); // "all", "active", "past"
+  const [statusFilter, setStatusFilter] = useState("all");
 
-  // Cargar líderes habilitados
   useEffect(() => {
     const fetchLeaders = async () => {
       try {
@@ -72,7 +70,6 @@ const GroupLeaderView = () => {
     fetchLeaders();
   }, []);
 
-  // Cargar trabajadores al seleccionar un líder (usando array-contains)
   useEffect(() => {
     const fetchWorkers = async () => {
       if (!selectedLeader) {
@@ -89,7 +86,6 @@ const GroupLeaderView = () => {
         const workersList = snapshot.docs.map((doc) => {
           const data = doc.data();
           const groupLeaderArray = data.groupLeader || [];
-          // Determinar el estado según la posición del líder seleccionado
           let status = "none";
           if (groupLeaderArray[0] === selectedLeader) {
             status = "active";
@@ -104,7 +100,6 @@ const GroupLeaderView = () => {
           };
         });
         setWorkersRaw(workersList);
-        // Resetear filtros al cambiar de líder
         setSearchTerm("");
         setSortBy("nombre");
         setSortOrder("asc");
@@ -119,16 +114,13 @@ const GroupLeaderView = () => {
     fetchWorkers();
   }, [selectedLeader]);
 
-  // Aplicar filtros de búsqueda y estado
   const filteredWorkers = useMemo(() => {
     let result = workersRaw;
-    // Filtrar por estado
     if (statusFilter === "active") {
       result = result.filter(w => w.status === "active");
     } else if (statusFilter === "past") {
       result = result.filter(w => w.status === "past");
     }
-    // Filtrar por texto
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
       result = result.filter(
@@ -138,7 +130,6 @@ const GroupLeaderView = () => {
     return result;
   }, [workersRaw, searchTerm, statusFilter]);
 
-  // Ordenar trabajadores
   const sortedWorkers = useMemo(() => {
     const sorted = [...filteredWorkers];
     sorted.sort((a, b) => {
@@ -166,28 +157,23 @@ const GroupLeaderView = () => {
     setSearchTerm("");
   };
 
-  // Exportar a PDF incluyendo la columna de estado
   const exportToPDF = () => {
     if (!selectedLeader || sortedWorkers.length === 0) return;
-
     const doc = new jsPDF();
     const date = new Date().toLocaleDateString();
     const time = new Date().toLocaleTimeString();
-
     doc.setFontSize(16);
     doc.text(`Trabajadores del líder: ${selectedLeader}`, 14, 15);
     doc.setFontSize(10);
     doc.text(`Exportado: ${date} ${time}`, 14, 22);
     doc.text(`Total de trabajadores: ${sortedWorkers.length}`, 14, 29);
     doc.text(`Filtro de estado: ${statusFilter === "all" ? "Todos" : statusFilter === "active" ? "Activos" : "Anteriores"}`, 14, 36);
-
     const tableColumn = ["RUT", "Nombre", "Estado"];
-    const tableRows = sortedWorkers.map((w) => [
+    const tableRows = sortedWorkers.map(w => [
       w.rut,
       w.name,
       w.status === "active" ? "Activo" : "Anterior",
     ]);
-
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
@@ -196,15 +182,37 @@ const GroupLeaderView = () => {
       headStyles: { fillColor: [47, 133, 90] },
       margin: { left: 14, right: 14 },
     });
-
     doc.save(`trabajadores_${selectedLeader}.pdf`);
+  };
+
+  const exportToExcel = () => {
+    if (!selectedLeader || sortedWorkers.length === 0) return;
+    let sheetName = `Trabajadores_${selectedLeader}`;
+    sheetName = sheetName.replace(/[\\/*?:[\]]/g, "");
+    if (sheetName.length > 31) {
+      sheetName = sheetName.substring(0, 31);
+    }
+    if (sheetName.length === 0) {
+      sheetName = "Trabajadores";
+    }
+    const worksheetData = [
+      ["RUT", "Nombre", "Estado"],
+      ...sortedWorkers.map(w => [
+        w.rut,
+        w.name,
+        w.status === "active" ? "Activo" : "Anterior"
+      ])
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    XLSX.writeFile(workbook, `trabajadores_${selectedLeader}.xlsx`);
   };
 
   const handleLeaderChange = (e) => {
     setSelectedLeader(e.target.value);
   };
 
-  // Estadísticas para mostrar
   const activeCount = workersRaw.filter(w => w.status === "active").length;
   const pastCount = workersRaw.filter(w => w.status === "past").length;
 
@@ -244,7 +252,6 @@ const GroupLeaderView = () => {
 
       {selectedLeader && !loadingLeaders && (
         <VStack align="stretch" spacing={4}>
-          {/* Resumen de activos y anteriores */}
           {!loadingWorkers && workersRaw.length > 0 && (
             <Flex gap={4} wrap="wrap">
               <Badge colorScheme="green" p={2} borderRadius="md">
@@ -256,7 +263,6 @@ const GroupLeaderView = () => {
             </Flex>
           )}
 
-          {/* Filtros y búsqueda */}
           <Flex justify="space-between" wrap="wrap" gap={3}>
             <InputGroup maxW="300px">
               <InputLeftElement pointerEvents="none">
@@ -282,10 +288,19 @@ const GroupLeaderView = () => {
                   isDisabled={sortedWorkers.length === 0}
                 />
               </Tooltip>
+              <Tooltip label="Exportar a Excel">
+                <IconButton
+                  icon={<DownloadIcon />}
+                  colorScheme="green"
+                  variant="outline"
+                  onClick={exportToExcel}
+                  aria-label="Exportar a Excel"
+                  isDisabled={sortedWorkers.length === 0}
+                />
+              </Tooltip>
             </HStack>
           </Flex>
 
-          {/* Filtro por estado */}
           <RadioGroup onChange={setStatusFilter} value={statusFilter}>
             <Stack direction="row" spacing={4}>
               <Radio value="all">Todos</Radio>
@@ -294,7 +309,6 @@ const GroupLeaderView = () => {
             </Stack>
           </RadioGroup>
 
-          {/* Ordenamiento */}
           <HStack spacing={4} borderBottom="1px solid" borderColor="gray.200" pb={2}>
             <Text fontWeight="bold">Ordenar por:</Text>
             <Button
@@ -334,34 +348,37 @@ const GroupLeaderView = () => {
               <Text fontSize="sm" color="gray.600">
                 Mostrando {sortedWorkers.length} trabajador(es)
               </Text>
-              <Table variant="simple" size="sm">
-                <Thead bg="green.100">
-                  <Tr>
-                    <Th cursor="pointer" onClick={() => handleSort("rut")}>
-                      RUT {sortBy === "rut" && (sortOrder === "asc" ? "↑" : "↓")}
-                    </Th>
-                    <Th cursor="pointer" onClick={() => handleSort("nombre")}>
-                      Nombre {sortBy === "nombre" && (sortOrder === "asc" ? "↑" : "↓")}
-                    </Th>
-                    <Th>Estado</Th>
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {sortedWorkers.map((worker) => (
-                    <Tr key={worker.rut}>
-                      <Td>{worker.rut}</Td>
-                      <Td>{worker.name}</Td>
-                      <Td>
-                        {worker.status === "active" ? (
-                          <Badge colorScheme="green">Activo</Badge>
-                        ) : (
-                          <Badge colorScheme="gray">Anterior</Badge>
-                        )}
-                      </Td>
+              {/* Contenedor con overflow horizontal para móviles */}
+              <Box overflowX="auto">
+                <Table variant="simple" size="sm" minWidth="500px">
+                  <Thead bg="green.100">
+                    <Tr>
+                      <Th minW="150px" cursor="pointer" onClick={() => handleSort("rut")}>
+                        RUT {sortBy === "rut" && (sortOrder === "asc" ? "↑" : "↓")}
+                      </Th>
+                      <Th minW="200px" cursor="pointer" onClick={() => handleSort("nombre")}>
+                        Nombre {sortBy === "nombre" && (sortOrder === "asc" ? "↑" : "↓")}
+                      </Th>
+                      <Th minW="100px">Estado</Th>
                     </Tr>
-                  ))}
-                </Tbody>
-              </Table>
+                  </Thead>
+                  <Tbody>
+                    {sortedWorkers.map((worker) => (
+                      <Tr key={worker.rut}>
+                        <Td>{worker.rut}</Td>
+                        <Td>{worker.name}</Td>
+                        <Td>
+                          {worker.status === "active" ? (
+                            <Badge colorScheme="green">Activo</Badge>
+                          ) : (
+                            <Badge colorScheme="gray">Anterior</Badge>
+                          )}
+                        </Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              </Box>
             </>
           )}
         </VStack>
