@@ -22,6 +22,10 @@ import {
   InputGroup,
   InputLeftElement,
   Flex,
+  Badge,
+  RadioGroup,
+  Radio,
+  Stack,
 } from "@chakra-ui/react";
 import { SearchIcon, ArrowUpIcon, ArrowDownIcon, DownloadIcon } from "@chakra-ui/icons";
 import { collection, query, where, getDocs } from "firebase/firestore";
@@ -32,15 +36,16 @@ import autoTable from "jspdf-autotable";
 const GroupLeaderView = () => {
   const [leaders, setLeaders] = useState([]);
   const [selectedLeader, setSelectedLeader] = useState("");
-  const [workers, setWorkers] = useState([]);
+  const [workersRaw, setWorkersRaw] = useState([]); // trabajadores sin clasificar
   const [loadingLeaders, setLoadingLeaders] = useState(true);
   const [loadingWorkers, setLoadingWorkers] = useState(false);
   const [error, setError] = useState(null);
-  
+
   // Estados para filtro y ordenamiento
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState("nombre"); // "rut" o "nombre"
-  const [sortOrder, setSortOrder] = useState("asc"); // "asc" o "desc"
+  const [sortOrder, setSortOrder] = useState("asc");
+  const [statusFilter, setStatusFilter] = useState("all"); // "all", "active", "past"
 
   // Cargar líderes habilitados
   useEffect(() => {
@@ -67,11 +72,11 @@ const GroupLeaderView = () => {
     fetchLeaders();
   }, []);
 
-  // Cargar trabajadores al seleccionar un líder
+  // Cargar trabajadores al seleccionar un líder (usando array-contains)
   useEffect(() => {
     const fetchWorkers = async () => {
       if (!selectedLeader) {
-        setWorkers([]);
+        setWorkersRaw([]);
         return;
       }
       try {
@@ -81,15 +86,29 @@ const GroupLeaderView = () => {
           where("groupLeader", "array-contains", selectedLeader)
         );
         const snapshot = await getDocs(q);
-        const workersList = snapshot.docs.map((doc) => ({
-          rut: doc.id,
-          name: doc.data().name || "Sin nombre",
-        }));
-        setWorkers(workersList);
+        const workersList = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          const groupLeaderArray = data.groupLeader || [];
+          // Determinar el estado según la posición del líder seleccionado
+          let status = "none";
+          if (groupLeaderArray[0] === selectedLeader) {
+            status = "active";
+          } else if (groupLeaderArray.includes(selectedLeader)) {
+            status = "past";
+          }
+          return {
+            rut: doc.id,
+            name: data.name || "Sin nombre",
+            groupLeader: groupLeaderArray,
+            status,
+          };
+        });
+        setWorkersRaw(workersList);
         // Resetear filtros al cambiar de líder
         setSearchTerm("");
         setSortBy("nombre");
         setSortOrder("asc");
+        setStatusFilter("all");
       } catch (err) {
         console.error("Error al cargar trabajadores:", err);
         setError("Error al cargar los trabajadores de este líder.");
@@ -100,16 +119,24 @@ const GroupLeaderView = () => {
     fetchWorkers();
   }, [selectedLeader]);
 
-  // Filtrar trabajadores
+  // Aplicar filtros de búsqueda y estado
   const filteredWorkers = useMemo(() => {
-    if (!searchTerm.trim()) return workers;
-    const term = searchTerm.toLowerCase();
-    return workers.filter(
-      (w) =>
-        w.rut.toLowerCase().includes(term) ||
-        w.name.toLowerCase().includes(term)
-    );
-  }, [workers, searchTerm]);
+    let result = workersRaw;
+    // Filtrar por estado
+    if (statusFilter === "active") {
+      result = result.filter(w => w.status === "active");
+    } else if (statusFilter === "past") {
+      result = result.filter(w => w.status === "past");
+    }
+    // Filtrar por texto
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase();
+      result = result.filter(
+        w => w.rut.toLowerCase().includes(term) || w.name.toLowerCase().includes(term)
+      );
+    }
+    return result;
+  }, [workersRaw, searchTerm, statusFilter]);
 
   // Ordenar trabajadores
   const sortedWorkers = useMemo(() => {
@@ -139,38 +166,47 @@ const GroupLeaderView = () => {
     setSearchTerm("");
   };
 
-  // Exportar a PDF
+  // Exportar a PDF incluyendo la columna de estado
   const exportToPDF = () => {
     if (!selectedLeader || sortedWorkers.length === 0) return;
-    
+
     const doc = new jsPDF();
     const date = new Date().toLocaleDateString();
     const time = new Date().toLocaleTimeString();
-    
+
     doc.setFontSize(16);
     doc.text(`Trabajadores del líder: ${selectedLeader}`, 14, 15);
     doc.setFontSize(10);
     doc.text(`Exportado: ${date} ${time}`, 14, 22);
     doc.text(`Total de trabajadores: ${sortedWorkers.length}`, 14, 29);
-    
-    const tableColumn = ["RUT", "Nombre"];
-    const tableRows = sortedWorkers.map((w) => [w.rut, w.name]);
-    
+    doc.text(`Filtro de estado: ${statusFilter === "all" ? "Todos" : statusFilter === "active" ? "Activos" : "Anteriores"}`, 14, 36);
+
+    const tableColumn = ["RUT", "Nombre", "Estado"];
+    const tableRows = sortedWorkers.map((w) => [
+      w.rut,
+      w.name,
+      w.status === "active" ? "Activo" : "Anterior",
+    ]);
+
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
-      startY: 35,
+      startY: 43,
       theme: "striped",
-      headStyles: { fillColor: [47, 133, 90] }, // verde
+      headStyles: { fillColor: [47, 133, 90] },
       margin: { left: 14, right: 14 },
     });
-    
+
     doc.save(`trabajadores_${selectedLeader}.pdf`);
   };
 
   const handleLeaderChange = (e) => {
     setSelectedLeader(e.target.value);
   };
+
+  // Estadísticas para mostrar
+  const activeCount = workersRaw.filter(w => w.status === "active").length;
+  const pastCount = workersRaw.filter(w => w.status === "past").length;
 
   return (
     <Box p={4} borderWidth="1px" borderRadius="lg" bg="white">
@@ -208,6 +244,19 @@ const GroupLeaderView = () => {
 
       {selectedLeader && !loadingLeaders && (
         <VStack align="stretch" spacing={4}>
+          {/* Resumen de activos y anteriores */}
+          {!loadingWorkers && workersRaw.length > 0 && (
+            <Flex gap={4} wrap="wrap">
+              <Badge colorScheme="green" p={2} borderRadius="md">
+                Activos: {activeCount}
+              </Badge>
+              <Badge colorScheme="gray" p={2} borderRadius="md">
+                Anteriores: {pastCount}
+              </Badge>
+            </Flex>
+          )}
+
+          {/* Filtros y búsqueda */}
           <Flex justify="space-between" wrap="wrap" gap={3}>
             <InputGroup maxW="300px">
               <InputLeftElement pointerEvents="none">
@@ -236,6 +285,16 @@ const GroupLeaderView = () => {
             </HStack>
           </Flex>
 
+          {/* Filtro por estado */}
+          <RadioGroup onChange={setStatusFilter} value={statusFilter}>
+            <Stack direction="row" spacing={4}>
+              <Radio value="all">Todos</Radio>
+              <Radio value="active">Solo activos</Radio>
+              <Radio value="past">Solo anteriores</Radio>
+            </Stack>
+          </RadioGroup>
+
+          {/* Ordenamiento */}
           <HStack spacing={4} borderBottom="1px solid" borderColor="gray.200" pb={2}>
             <Text fontWeight="bold">Ordenar por:</Text>
             <Button
@@ -266,7 +325,9 @@ const GroupLeaderView = () => {
           ) : sortedWorkers.length === 0 ? (
             <Alert status="info" borderRadius="md">
               <AlertIcon />
-              {searchTerm ? "No hay trabajadores que coincidan con el filtro." : "No hay trabajadores asignados a este líder."}
+              {searchTerm || statusFilter !== "all"
+                ? "No hay trabajadores que coincidan con los filtros actuales."
+                : "No hay trabajadores asignados a este líder (ni activos ni anteriores)."}
             </Alert>
           ) : (
             <>
@@ -282,6 +343,7 @@ const GroupLeaderView = () => {
                     <Th cursor="pointer" onClick={() => handleSort("nombre")}>
                       Nombre {sortBy === "nombre" && (sortOrder === "asc" ? "↑" : "↓")}
                     </Th>
+                    <Th>Estado</Th>
                   </Tr>
                 </Thead>
                 <Tbody>
@@ -289,6 +351,13 @@ const GroupLeaderView = () => {
                     <Tr key={worker.rut}>
                       <Td>{worker.rut}</Td>
                       <Td>{worker.name}</Td>
+                      <Td>
+                        {worker.status === "active" ? (
+                          <Badge colorScheme="green">Activo</Badge>
+                        ) : (
+                          <Badge colorScheme="gray">Anterior</Badge>
+                        )}
+                      </Td>
                     </Tr>
                   ))}
                 </Tbody>
